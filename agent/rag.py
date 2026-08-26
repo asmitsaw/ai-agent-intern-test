@@ -33,13 +33,15 @@ from agent.config import (
     CHUNK_OVERLAP,
     CHUNK_SIZE,
     EMBEDDING_MODEL,
+    EMBEDDING_PROVIDER,
     KNOWLEDGE_BASE_PATH,
-    OPENAI_API_KEY,
+    LLM_API_KEY,
+    LLM_BASE_URL,
     RETRIEVAL_TOP_K,
     VECTOR_STORE_PATH,
 )
 
-# ── Tokeniser (cl100k_base works for all OpenAI embedding models) ────────────
+# ── Tokeniser (cl100k_base works for modern embedding models) ─────────────────
 _enc = tiktoken.get_encoding("cl100k_base")
 
 
@@ -49,9 +51,12 @@ def _token_len(text: str) -> int:
 
 # ── ChromaDB client & embedding function ─────────────────────────────────────
 
-def _get_embedding_fn() -> embedding_functions.OpenAIEmbeddingFunction:
+def _get_embedding_fn():
+    if EMBEDDING_PROVIDER == "local":
+        return embedding_functions.DefaultEmbeddingFunction()
     return embedding_functions.OpenAIEmbeddingFunction(
-        api_key=OPENAI_API_KEY,
+        api_key=LLM_API_KEY,
+        api_base=LLM_BASE_URL if "api.openai.com" not in LLM_BASE_URL else None,
         model_name=EMBEDDING_MODEL,
     )
 
@@ -70,7 +75,11 @@ def _get_collection(create: bool = False) -> chromadb.Collection:
             embedding_function=ef,
             metadata={"hnsw:space": "cosine"},
         )
-    return client.get_collection(name=CHROMA_COLLECTION, embedding_function=ef)
+    return client.get_or_create_collection(
+        name=CHROMA_COLLECTION,
+        embedding_function=ef,
+        metadata={"hnsw:space": "cosine"},
+    )
 
 
 # ── Chunking ─────────────────────────────────────────────────────────────────
@@ -158,13 +167,13 @@ def build_index(verbose: bool = True) -> int:
             )
 
         if verbose:
-            print(f"  Indexed {doc_path.name} → {len(chunks)} chunk(s)")
+            print(f"  Indexed {doc_path.name} -> {len(chunks)} chunk(s)")
 
     # Batch upsert
     collection.add(ids=ids, documents=documents, metadatas=metadatas)
 
     if verbose:
-        print(f"\n✓ Total chunks indexed: {len(ids)}")
+        print(f"\n[OK] Total chunks indexed: {len(ids)}")
 
     return len(ids)
 
@@ -236,12 +245,22 @@ def retrieve(query: str, k: int = RETRIEVAL_TOP_K) -> list[RetrievedChunk]:
 
     Returns at most `k` chunks, re-ranked by (cosine_score + boost).
     """
-    collection = _get_collection(create=False)
+    try:
+        collection = _get_collection(create=False)
+        total_count = collection.count()
+        if total_count == 0:
+            return []
+    except Exception:
+        return []
+
+    fetch_k = min(k * 4, total_count)
+    if fetch_k <= 0:
+        return []
 
     # Over-fetch to allow post-filter
     raw = collection.query(
         query_texts=[query],
-        n_results=min(k * 4, collection.count()),
+        n_results=fetch_k,
         include=["documents", "metadatas", "distances"],
     )
 

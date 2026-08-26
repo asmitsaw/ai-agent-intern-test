@@ -1,5 +1,7 @@
 """
 agent/config.py — Centralised configuration loaded from environment variables.
+Configured for top Chinese open-source foundation models (DeepSeek-V3 / Qwen 2.5)
+with optional local embedding support.
 """
 from __future__ import annotations
 
@@ -13,19 +15,28 @@ _ROOT = Path(__file__).parent.parent
 load_dotenv(_ROOT / ".env")
 
 
-def _require(key: str) -> str:
-    val = os.getenv(key)
-    if not val:
-        raise EnvironmentError(
-            f"Missing required environment variable: {key}\n"
-            f"Copy .env.example to .env and fill in your values."
-        )
-    return val
+def _get_api_key() -> str:
+    key = (
+        os.getenv("OPENROUTER_API_KEY")
+        or os.getenv("DEEPSEEK_API_KEY")
+        or os.getenv("DASHSCOPE_API_KEY")
+        or os.getenv("LLM_API_KEY")
+        or os.getenv("OPENAI_API_KEY")
+        or ""
+    )
+    return key
 
 
 # ── LLM / Embeddings ──────────────────────────────────────────────────────────
-OPENAI_API_KEY: str = _require("OPENAI_API_KEY")
-LLM_MODEL: str = os.getenv("LLM_MODEL", "gpt-4o-mini")
+LLM_API_KEY: str = _get_api_key()
+# Default to DeepSeek API endpoint (DeepSeek-V3 / DeepSeek-R1 open-source foundation model)
+# Can also be set to Alibaba DashScope for Qwen ("https://dashscope-intl.aliyuncs.com/compatible-mode/v1")
+# or local Ollama ("http://localhost:11434/v1")
+LLM_BASE_URL: str = os.getenv("LLM_BASE_URL", "https://api.deepseek.com")
+LLM_MODEL: str = os.getenv("LLM_MODEL", "deepseek-chat")  # deepseek-chat (DeepSeek-V3) or qwen-plus
+
+# Embedding Provider: "local" (runs offline on-device via ONNX) or "openai_compatible"
+EMBEDDING_PROVIDER: str = os.getenv("EMBEDDING_PROVIDER", "local").lower()
 EMBEDDING_MODEL: str = os.getenv("EMBEDDING_MODEL", "text-embedding-3-small")
 
 # ── Paths ─────────────────────────────────────────────────────────────────────

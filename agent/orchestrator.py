@@ -23,7 +23,13 @@ from typing import Any
 
 from openai import OpenAI
 
-from agent.config import HISTORY_WINDOW, LLM_MODEL, OPENAI_API_KEY, RETRIEVAL_TOP_K
+from agent.config import (
+    HISTORY_WINDOW,
+    LLM_API_KEY,
+    LLM_BASE_URL,
+    LLM_MODEL,
+    RETRIEVAL_TOP_K,
+)
 from agent.logger import AgentLogger
 from agent.order_tool import lookup_order
 from agent.prompts import (
@@ -78,7 +84,10 @@ class AgentSession:
     def __init__(self, session_id: str | None = None) -> None:
         self.session_id: str = session_id or str(uuid.uuid4())[:8]
         self._history: list[dict[str, str]] = []  # OpenAI message dicts
-        self._client: OpenAI = OpenAI(api_key=OPENAI_API_KEY)
+        self._client: OpenAI = OpenAI(
+            api_key=LLM_API_KEY or "dummy-key",
+            base_url=LLM_BASE_URL,
+        )
         self._logger: AgentLogger = AgentLogger(self.session_id)
 
     # ── Public API ────────────────────────────────────────────────────────────
@@ -159,21 +168,32 @@ class AgentSession:
 
     # ── Internals ─────────────────────────────────────────────────────────────
 
-    def _call_llm(self, messages: list[dict[str, str]]) -> str:
-        try:
-            completion = self._client.chat.completions.create(
-                model=LLM_MODEL,
-                messages=messages,  # type: ignore[arg-type]
-                temperature=0.1,    # low temperature → more deterministic
-                max_tokens=1024,
-            )
-            return completion.choices[0].message.content or ""
-        except Exception as exc:
-            self._logger.error(str(exc))
-            return (
-                "I'm sorry, I encountered an error while processing your request. "
-                "I recommend contacting our support team for further assistance."
-            )
+    def _call_llm(self, messages: list[dict[str, str]], max_retries: int = 3) -> str:
+        import time
+        for attempt in range(max_retries):
+            try:
+                completion = self._client.chat.completions.create(
+                    model=LLM_MODEL,
+                    messages=messages,  # type: ignore[arg-type]
+                    temperature=0.1,    # low temperature → more deterministic
+                    max_tokens=1024,
+                )
+                return completion.choices[0].message.content or ""
+            except Exception as exc:
+                is_rate_limit = "429" in str(exc) or "rate" in str(exc).lower()
+                if is_rate_limit and attempt < max_retries - 1:
+                    wait_time = 4 * (attempt + 1)
+                    time.sleep(wait_time)
+                    continue
+                self._logger.error(str(exc))
+                return (
+                    "I'm sorry, I encountered an error while processing your request. "
+                    "I recommend contacting our support team for further assistance."
+                )
+        return (
+            "I'm sorry, I encountered an error while processing your request. "
+            "I recommend contacting our support team for further assistance."
+        )
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
