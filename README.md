@@ -12,7 +12,7 @@
 <video src="aster rag agent .mp4" controls="controls" style="max-width: 100%;"></video>
 
 🎬 **Direct Link:** [Watch the Video Walkthrough on Google Drive](https://drive.google.com/file/d/1S-ru3VlAdG05b_tqD8bBA1StmvE_U8TN/view?usp=sharing)
-<video src="aster rag agent .mp4" controls="controls" style="max-width: 100%;"></video>
+<video src="https://github.com/asmitsaw/ai-agent-intern-test/blob/459d67c29020969b2991265e524c402c2c15ea8b/aster%20rag%20agent%20.mp4" controls="controls" style="max-width: 100%;"></video>
 
 ---
 
