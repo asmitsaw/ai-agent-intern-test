@@ -1,6 +1,6 @@
 # Aster & Row — Grounded RAG Support Agent
 
-> **AI Take-Home Assignment Submission**
+> **AI Take-Home Assignment Submission**  
 > *A production-ready, grounded RAG customer support system for Aster & Row. Architected to rigorously handle policy contradictions, superseded documentation, sensitive customer data privacy, status-precedence logic, and prompt injection attacks.*
 
 ---
@@ -8,6 +8,8 @@
 ## 📺 Demo Video
 
 [![Watch the Demo Video](https://img.shields.io/badge/Demo_Video-Watch_Walkthrough-blue?style=for-the-badge&logo=google-drive)](https://drive.google.com/file/d/1S-ru3VlAdG05b_tqD8bBA1StmvE_U8TN/view?usp=sharing)
+
+<video src="aster rag agent .mp4" controls="controls" style="max-width: 100%;"></video>
 
 🎬 **Direct Link:** [Watch the Video Walkthrough on Google Drive](https://drive.google.com/file/d/1S-ru3VlAdG05b_tqD8bBA1StmvE_U8TN/view?usp=sharing)
 <video src="aster rag agent .mp4" controls="controls" style="max-width: 100%;"></video>
