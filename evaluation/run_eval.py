@@ -104,7 +104,7 @@ def print_results(results: list[dict]) -> None:
     console.print()
 
     # ── Per-case table ────────────────────────────────────────────────────────
-    table = Table(title="Evaluation Results — Per Case", box=box.ROUNDED, show_lines=True)
+    table = Table(title="Evaluation Results -- Per Case", box=box.ASCII, show_lines=True)
     table.add_column("Case ID", style="bold")
     table.add_column("Category", style="cyan")
     table.add_column("Status", justify="center")
@@ -130,7 +130,7 @@ def print_results(results: list[dict]) -> None:
         if r["passed"]:
             cat_stats[cat]["passed"] += 1
 
-    cat_table = Table(title="Evaluation Results — By Category", box=box.ROUNDED)
+    cat_table = Table(title="Evaluation Results -- By Category", box=box.ASCII)
     cat_table.add_column("Category", style="cyan bold")
     cat_table.add_column("Passed", justify="right")
     cat_table.add_column("Total", justify="right")

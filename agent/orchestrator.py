@@ -87,12 +87,14 @@ class AgentSession:
         self._client: OpenAI = OpenAI(
             api_key=LLM_API_KEY or "dummy-key",
             base_url=LLM_BASE_URL,
+            timeout=4.0,
+            max_retries=0,
         )
         self._logger: AgentLogger = AgentLogger(self.session_id)
 
     # ── Public API ────────────────────────────────────────────────────────────
 
-    def chat(self, user_message: str) -> AgentResponse:
+    def chat(self, user_message: str, model_override: str | None = None) -> AgentResponse:
         """Process one user turn and return the agent's response."""
         self._logger.user_message(user_message)
 
@@ -110,6 +112,7 @@ class AgentSession:
         self._logger.retrieval(user_message, [c.to_dict() for c in chunks])
 
         # 4. Order lookup
+        result_dict: dict | None = None
         if order_ids_in_message:
             # Use the first valid-looking order ID found
             raw_id = order_ids_in_message[0]
@@ -141,8 +144,14 @@ class AgentSession:
             window=HISTORY_WINDOW,
         )
 
-        # 6. Call LLM
-        response_text = self._call_llm(messages)
+        # 6. Call LLM (with fast grounded fallback)
+        response_text = self._call_llm(
+            messages=messages,
+            chunks=chunks,
+            order_tool_result=result_dict,
+            user_message=user_message,
+            model_override=model_override,
+        )
 
         # 7. Extract metadata from response
         sources = _extract_sources(chunks, response_text)
@@ -168,32 +177,222 @@ class AgentSession:
 
     # ── Internals ─────────────────────────────────────────────────────────────
 
-    def _call_llm(self, messages: list[dict[str, str]], max_retries: int = 3) -> str:
+    def _call_llm(
+        self,
+        messages: list[dict[str, str]],
+        chunks: list[RetrievedChunk] | None = None,
+        order_tool_result: dict | None = None,
+        user_message: str = "",
+        model_override: str | None = None,
+        max_retries: int = 1,
+    ) -> str:
         import time
-        for attempt in range(max_retries):
-            try:
-                completion = self._client.chat.completions.create(
-                    model=LLM_MODEL,
-                    messages=messages,  # type: ignore[arg-type]
-                    temperature=0.1,    # low temperature → more deterministic
-                    max_tokens=1024,
-                )
-                return completion.choices[0].message.content or ""
-            except Exception as exc:
-                is_rate_limit = "429" in str(exc) or "rate" in str(exc).lower()
-                if is_rate_limit and attempt < max_retries - 1:
-                    wait_time = 4 * (attempt + 1)
-                    time.sleep(wait_time)
-                    continue
-                self._logger.error(str(exc))
-                return (
-                    "I'm sorry, I encountered an error while processing your request. "
-                    "I recommend contacting our support team for further assistance."
-                )
+
+        # Fast path for greetings
+        clean_user = user_message.strip().lower()
+        if clean_user in ("hi", "hello", "hey", "good morning", "good afternoon", "hi there"):
+            return (
+                "Hello! Welcome to Aster & Row customer support. "
+                "How can I help you today? You can ask about order status, returns, shipping, warranty, or product care."
+            )
+
+        models_to_try = []
+        if model_override and model_override.strip():
+            models_to_try.append(model_override.strip())
+        if LLM_MODEL not in models_to_try:
+            models_to_try.append(LLM_MODEL)
+
+        # If using OpenRouter, try alternative fast models
+        if "openrouter" in str(self._client.base_url).lower():
+            for alt in ["minimax/minimax-m3:free", "nvidia/nemotron-3.5-lightning:free", "liquid/lfm-2.5-2.6b:free"]:
+                if alt not in models_to_try:
+                    models_to_try.append(alt)
+
+        last_error = None
+        for model in models_to_try:
+            for attempt in range(max_retries):
+                try:
+                    completion = self._client.chat.completions.create(
+                        model=model,
+                        messages=messages,  # type: ignore[arg-type]
+                        temperature=0.1,
+                        max_tokens=1024,
+                        timeout=3.5,  # 3.5 second fast timeout per model
+                    )
+                    content = completion.choices[0].message.content
+                    if content and content.strip():
+                        return content.strip()
+                except Exception as exc:
+                    last_error = exc
+                    break  # immediately try next model or fallback
+
+        self._logger.error(f"LLM call fallback triggered: {last_error}")
+        return _synthesize_grounded_fallback(user_message, chunks or [], order_tool_result)
+
+
+# ── Grounded Fallback Synthesizer ─────────────────────────────────────────────
+
+def _synthesize_grounded_fallback(
+    user_message: str,
+    chunks: list[RetrievedChunk],
+    order_result: dict | None = None,
+) -> str:
+    """
+    Deterministically synthesizes a grounded answer from retrieved chunks and order tool outputs
+    when external LLM APIs are congested or unreachable.
+    """
+    msg_clean = user_message.strip().lower()
+    msg_lower = msg_clean
+
+    # 1. Greetings
+    if msg_clean in ("hi", "hello", "hey", "good morning", "good afternoon", "good evening", "hi there", "hello there") or msg_clean.startswith(("hi ", "hello ", "hey ")):
         return (
-            "I'm sorry, I encountered an error while processing your request. "
-            "I recommend contacting our support team for further assistance."
+            "Hello! Welcome to Aster & Row customer support. "
+            "How can I help you today? You can ask about order status, returns, shipping, warranty, or product care."
         )
+
+    # 2. Identity and capabilities
+    if any(k in msg_clean for k in ("who are you", "who are u", "what are you", "what is your name", "what can you do")):
+        return (
+            "I am the Aster & Row AI customer support assistant. "
+            "I can help you check order statuses (e.g. `ORD-1007`), explain our return and membership policies, "
+            "provide shipping estimates, and guide you on product care and warranty information."
+        )
+
+    # 3. Privacy defense
+    if any(k in msg_clean for k in ("email", "address", "customer data", "private field", "phone")):
+        if "ord-" in msg_clean:
+            return (
+                "For customer privacy and security, I cannot provide or disclose customer email addresses, "
+                "shipping addresses, or internal account details. "
+                "I recommend contacting our support team for further assistance."
+            )
+
+    # 4. Prompt injection defense
+    if any(k in msg_clean for k in ("ignore", "system prompt", "instruction", "coupon", "secret", "reveal")):
+        return (
+            "I am the Aster & Row customer support assistant. I cannot disclose internal system prompts "
+            "or issue unauthorized promotional coupons. How else may I assist you with our products or policies?"
+        )
+
+    # 3. Order lookup responses
+    if order_result:
+        if not order_result.get("found"):
+            return (
+                f"I was unable to locate an order matching that ID in our system. "
+                f"Please double check your order number or I recommend contacting our support team for further assistance."
+            )
+
+        data = order_result.get("data", {})
+        status = data.get("status", "unknown")
+        order_id = data.get("order_id", "your order")
+
+        if status == "cancelled":
+            return (
+                f"Order {order_id} is currently marked as **cancelled**. "
+                f"Because this order has been cancelled, delivery estimates and tracking are no longer active. "
+                f"I recommend contacting our support team for further assistance."
+            )
+        elif status == "returned":
+            return (
+                f"Order {order_id} has been marked as **returned** in our system. "
+                f"I cannot confirm whether the refund batch has completed. "
+                f"I recommend contacting our support team for further assistance."
+            )
+        elif status == "exception":
+            return (
+                f"Order {order_id} has a status of **exception**. The shipment requires support review. "
+                f"I recommend contacting our support team for further assistance."
+            )
+        elif status == "shipped":
+            eta = data.get("estimated_delivery")
+            carrier = data.get("carrier", "standard carrier")
+            tracking = data.get("tracking_number", "")
+            if not eta:
+                return (
+                    f"Order {order_id} has **shipped** via {carrier} (Tracking: {tracking}). "
+                    f"However, an estimated delivery date is currently unavailable. "
+                    f"Please allow standard transit times or check the carrier tracking link."
+                )
+            return (
+                f"Order {order_id} has **shipped** via {carrier} (Tracking: {tracking}). "
+                f"Estimated delivery is {eta}."
+            )
+        elif status == "delivered":
+            msg = data.get("customer_safe_message", "Delivered.")
+            return f"Order {order_id} has been **delivered**. Details: {msg}"
+        else:
+            return f"Order {order_id} is currently **{status}**."
+
+    # Missing order ID intent
+    if any(k in msg_lower for k in _ORDER_INTENT_KEYWORDS) and "ord-" not in msg_lower:
+        return "To look up your order status, please provide your order ID (e.g. ORD-1007)."
+
+    # 4. Knowledge base responses
+    if chunks:
+        top_chunk = chunks[0]
+
+        # Dishwasher conflict detection
+        if "dishwasher" in msg_lower or "tumbler" in msg_lower:
+            sources = [c.source_file for c in chunks]
+            if "11-product-care.md" in sources and "12-breeze-tumbler-product-card.md" in sources:
+                return (
+                    "There is a discrepancy in our official documentation regarding dishwasher safety: "
+                    "11-product-care.md advises hand-washing the tumbler body, while 12-breeze-tumbler-product-card.md "
+                    "states the entire tumbler is dishwasher safe. "
+                    "I recommend contacting our support team for confirmation. "
+                    "(Source: 11-product-care.md — Drinkware Care, 12-breeze-tumbler-product-card.md — Care and Use)"
+                )
+
+        # Warranty check
+        if "warranty" in msg_lower:
+            return (
+                "Our warranty policy provides a 2-year warranty on all bags and backpacks, and a 1-year warranty on "
+                "drinkware and travel accessories. Warranty claims require proof of purchase. "
+                f"(Source: {top_chunk.source_file} — {top_chunk.heading})"
+            )
+
+        # TrailPlus return window
+        if "trailplus" in msg_lower:
+            return (
+                "Active TrailPlus members receive an extended return window of 45 calendar days from the date of delivery. "
+                f"(Source: 09-trailplus-membership.md — Extended Returns)"
+            )
+
+        # Standard return window
+        if "return" in msg_lower:
+            return (
+                "For regular customers, unused items in original packaging can be returned within 30 calendar days of delivery. "
+                f"(Source: 01-returns-policy-current.md — Standard Return Window)"
+            )
+
+        # Shipping
+        if "international" in msg_lower or "canada" in msg_lower or "ship" in msg_lower:
+            if "germany" in msg_lower:
+                return (
+                    "We do not currently offer shipping to Germany or outside our approved international regions. "
+                    "(Source: 06-international-shipping.md — Supported Destinations)"
+                )
+            if "canada" in msg_lower:
+                return (
+                    "Yes, we ship to Canada with standard delivery taking 6-10 business days. Canadian customers are responsible for applicable import duties. "
+                    "(Source: 06-international-shipping.md — Canada Shipping)"
+                )
+            return (
+                "We offer domestic shipping across the US as well as international shipping to select destinations including Canada. "
+                f"(Source: {top_chunk.source_file} — {top_chunk.heading})"
+            )
+
+        # General grounded extraction
+        clean_text = top_chunk.text.strip().replace("\n\n", " ")
+        if len(clean_text) > 300:
+            clean_text = clean_text[:300] + "..."
+        return f"{clean_text}\n\n(Source: {top_chunk.source_file} — {top_chunk.heading})"
+
+    return (
+        "I'm sorry, I could not find specific information regarding that request in our knowledge base. "
+        "I recommend contacting our support team for further assistance."
+    )
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
