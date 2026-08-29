@@ -11,8 +11,6 @@
 
 ## 📺 Demo Video
 
-[Watch the Video Walkthrough on Google Drive](https://drive.google.com/file/d/1S-ru3VlAdG05b_tqD8bBA1StmvE_U8TN/view?usp=sharing)
-
 
 
 <video src="https://github.com/user-attachments/assets/9a829dcb-d5e0-47f3-a008-8f8882fde050" width="100%" controls>
