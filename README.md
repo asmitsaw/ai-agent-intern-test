@@ -12,8 +12,12 @@
 ## 📺 Demo Video
 
 [Watch the Video Walkthrough on Google Drive](https://drive.google.com/file/d/1S-ru3VlAdG05b_tqD8bBA1StmvE_U8TN/view?usp=sharing)
-<video src="https://github.com/asmitsaw/ai-agent-intern-test/blob/459d67c29020969b2991265e524c402c2c15ea8b/aster%20rag%20agent%20.mp4" controls="controls" style="max-width: 100%;"></video>
-https://github.com/user-attachments/assets/9a829dcb-d5e0-47f3-a008-8f8882fde050
+
+
+
+<video src="https://github.com/user-attachments/assets/9a829dcb-d5e0-47f3-a008-8f8882fde050" width="100%" controls>
+</video>
+
 ---
 
 ## ⚡ Quick Start
